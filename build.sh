@@ -20,7 +20,9 @@ trap 'rm -rf "$work"' EXIT
 # pacman downloads as its unprivileged alpm user.
 chmod 755 "$work"
 
-pacman -Syu --noconfirm --needed base-devel sbsigntools grub linux-headers zstd github-cli >/dev/null
+pacman -Syu --noconfirm --needed base-devel sbsigntools grub linux-headers zstd github-cli git >/dev/null
+git config --global --add safe.directory "$here"
+recipe_rel="$(git -C "$here" rev-list --count HEAD -- packages/liora-secureboot 2>/dev/null || echo 1)"
 id builder >/dev/null 2>&1 || useradd -m builder
 
 # The keys, readable by the unprivileged user makepkg runs as.
@@ -70,7 +72,7 @@ build() {
     (( $# )) && cp "$@" "$dir/"
     chown -R builder "$dir"
     runuser -u builder -- env LIORA_SB_KEY_FILE="$LIORA_SB_KEY_FILE" LIORA_SB_CERT="$LIORA_SB_CERT" \
-        LIORA_KERNEL="$kernel" LIORA_SIGN_FILE="$(ls /usr/lib/modules/*/build/scripts/sign-file | head -n 1)" \
+        LIORA_KERNEL="$kernel" LIORA_RECIPE_REL="$recipe_rel" LIORA_SIGN_FILE="$(ls /usr/lib/modules/*/build/scripts/sign-file | head -n 1)" \
         bash -c "cd '$dir' && makepkg --nodeps --noconfirm --noprogressbar" >/dev/null
     cp "$dir/$name"-[0-9]*.pkg.tar.zst "$out/"
 }

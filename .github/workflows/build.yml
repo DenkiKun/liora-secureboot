@@ -24,6 +24,10 @@ jobs:
     container: archlinux:latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The whole history: build.sh numbers liora-secureboot's releases
+          # by the commits that changed its recipe.
+          fetch-depth: 0
       - name: Build, sign and publish
         run: bash build.sh
         env:

@@ -55,7 +55,7 @@ if [[ "$(modules_dir "$nvidia_pkg")" != "$(modules_dir "$linux_pkg")" ]]; then
     exit 0
 fi
 
-recipes="$(cd "$here" && find build.sh keys packages -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
+recipes="$(cd "$here" && find build.sh keys packages prebuilt -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
 state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel liora-drivers-rel=$drivers_rel recipes=$recipes"
 if [[ ${PUBLISH:-} == 1 ]]; then
     published="$(gh release download "$tag" --repo "${GITHUB_REPOSITORY:?}" --pattern state.txt --output - 2>/dev/null || true)"
@@ -87,6 +87,9 @@ build linux-liora "$linux_pkg"
 build nvidia-open-liora "$nvidia_pkg"
 build liora-secureboot
 build liora-drivers
+# Liora's own packages built from the Liora repository (see prebuilt/README.md):
+# published here so computers already installed get their updates.
+cp "$here"/prebuilt/*.pkg.tar.zst "$out/"
 
 for package in "$out"/*.pkg.tar.zst; do
     gpg --batch --yes --local-user "$fpr" --detach-sign "$package"

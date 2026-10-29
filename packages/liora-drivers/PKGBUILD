@@ -1,0 +1,24 @@
+# The graphics driver a Liora computer's card needs, installed by itself:
+# NVIDIA's driver on a card its open kernel modules support (GeForce GTX 16,
+# RTX 20 and newer), for computers installed without it (the installer's
+# "Automático" choice set up only the open-source nouveau driver until
+# 2026-10-29). liora-secureboot depends on it, so it reaches every Liora
+# computer with the next update.
+
+pkgname=liora-drivers
+pkgver=1
+# build.sh counts the commits that changed this recipe.
+pkgrel=${LIORA_RECIPE_REL:-1}
+pkgdesc="Installs the graphics driver this computer's card needs"
+arch=(any)
+url='https://github.com/DenkiKun/liora-secureboot'
+license=(GPL-3.0-or-later)
+depends=(bash pacman glib2)
+install=liora-drivers.install
+source=(liora-drivers liora-drivers.service liora-drivers.timer)
+sha256sums=(SKIP SKIP SKIP)
+
+package() {
+	install -Dm755 liora-drivers "$pkgdir/usr/lib/liora/liora-drivers"
+	install -Dm644 -t "$pkgdir/usr/lib/systemd/system" liora-drivers.service liora-drivers.timer
+}

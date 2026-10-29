@@ -16,7 +16,9 @@ pkgdesc='Secure Boot for Liora: shim, a signed GRUB and the liora certificate'
 arch=(x86_64)
 url='https://github.com/DenkiKun/liora-secureboot'
 license=(GPL-3.0-or-later BSD-2-Clause)
-depends=(bash efibootmgr grub mokutil)
+# liora-drivers: every Liora computer has this package, so the ones installed
+# before the installer detected NVIDIA cards get their driver this way.
+depends=(bash efibootmgr grub mokutil liora-drivers)
 makedepends=(grub sbsigntools)
 options=(!strip !debug)
 install=liora-secureboot.install

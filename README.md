@@ -8,6 +8,7 @@ Secure Boot for [Liora Linux](https://github.com/DenkiKun), an Arch Linux based 
 | `nvidia-open-liora` | Arch Linux's `nvidia-open` modules, signed with the Liora key. Published only together with a matching `linux-liora`. |
 | `liora-secureboot` | Fedora's shim (signed by Microsoft), a GRUB image signed with the Liora key, the `liora` certificate and the `liora-secureboot` command that installs them. |
 | `liora-drivers` | Installs NVIDIA's driver (signed modules under `linux-liora`) on computers with a GeForce GTX 16, RTX 20 or newer card that do not have it yet. A dependency of `liora-secureboot`, so every Liora computer gets it. |
+| `liora-branding` | Liora's look (logo, glass windows, cursors, sounds, boot splash), built from the Liora repository and kept in [`prebuilt/`](prebuilt/): published here so installed computers get its updates. |
 
 The boot chain: UEFI firmware → shim (Microsoft UEFI CA) → GRUB (Liora key, enrolled as a MOK) → `linux-liora` (Liora key) → modules (Arch's build key, or the Liora key for NVIDIA).
 

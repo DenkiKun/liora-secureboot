@@ -1,0 +1,36 @@
+# Arch Linux's kernel with its EFI image signed by the Liora Secure Boot key,
+# so that shim boots it once the "liora" certificate is enrolled. The modules
+# are Arch's, already signed by the key built into this same kernel.
+#
+# build.sh puts Arch's package (downloaded and signature-checked by pacman)
+# next to this file; everything else is read from it.
+
+_arch_pkg=(linux-[0-9]*.pkg.tar.zst)
+_info() { bsdtar -xOf "${_arch_pkg[0]}" .PKGINFO | awk -v k="$1" '$1 == k { sub(/^[^=]*= /, ""); print }'; }
+_full="$(_info pkgver)"
+
+pkgname=linux-liora
+pkgver=${_full%-*}
+pkgrel=${_full##*-}
+pkgdesc="$(_info pkgdesc), signed for Secure Boot with Liora's key"
+arch=(x86_64)
+url='https://github.com/DenkiKun/liora-secureboot'
+license=(GPL-2.0-only)
+mapfile -t depends < <(_info depend)
+mapfile -t optdepends < <(_info optdepend)
+mapfile -t provides < <(_info provides)
+provides+=("linux=$_full")
+conflicts=(linux)
+replaces=(linux)
+options=(!strip !debug)
+source=("${_arch_pkg[0]}")
+noextract=("${_arch_pkg[0]}")
+sha256sums=(SKIP)
+
+package() {
+	bsdtar -xf "${_arch_pkg[0]}" -C "$pkgdir" --exclude .PKGINFO --exclude .BUILDINFO \
+		--exclude .MTREE --exclude .INSTALL
+	local image=("$pkgdir"/usr/lib/modules/*/vmlinuz)
+	sbsign --key "${LIORA_SB_KEY_FILE:?}" --cert "${LIORA_SB_CERT:?}" --output "$image.signed" "${image[0]}"
+	mv "$image.signed" "${image[0]}"
+}

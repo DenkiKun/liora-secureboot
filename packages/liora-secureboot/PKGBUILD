@@ -1,0 +1,69 @@
+# Liora's Secure Boot chain: Fedora's shim (signed by Microsoft), which trusts
+# the "liora" certificate once it is enrolled (MOK), and a GRUB image signed
+# with Liora's key that starts Liora's own GRUB menu. liora-secureboot puts
+# them on the EFI system partition and asks for the certificate to be
+# enrolled.
+
+pkgname=liora-secureboot
+_shimver=16.1-7
+_grubver="$(pacman -Q grub | awk '{ print $2 }')"
+# The shim, the GRUB that went into the image, and this recipe.
+pkgver="${_shimver//-/.}.${_grubver//[:-]/.}"
+pkgrel=1
+pkgdesc='Secure Boot for Liora: shim, a signed GRUB and the liora certificate'
+arch=(x86_64)
+url='https://github.com/DenkiKun/liora-secureboot'
+license=(GPL-3.0-or-later BSD-2-Clause)
+depends=(bash efibootmgr grub mokutil)
+makedepends=(grub sbsigntools)
+options=(!strip !debug)
+install=liora-secureboot.install
+source=("https://kojipkgs.fedoraproject.org/packages/shim/${_shimver%-*}/${_shimver#*-}/x86_64/shim-x64-$_shimver.x86_64.rpm"
+        early.cfg liora-secureboot liora-secureboot.hook
+        05_liora_lockdown 60-liora-secureboot.conf liora.cer)
+noextract=("shim-x64-$_shimver.x86_64.rpm")
+# The shim RPM's checksum is the one the AUR shim-signed recipe pins.
+sha512sums=('642f7bd66f9d420fed5d5686d968a2065af445b4e7ba3d27a0a4f5852aefadd1835c485968e7bdc7cea5f377095bd3efcc8636837e3059a19cfab1c777e218f0'
+            SKIP SKIP SKIP SKIP SKIP SKIP)
+
+# Under Secure Boot GRUB cannot load modules from disk: everything the Liora
+# menu (grub-mkconfig and grub-btrfs) uses is built into the image.
+_modules=(all_video bli boot btrfs cat chain configfile echo efifwsetup efi_gop
+          ext2 fat font gettext gfxmenu gfxterm gfxterm_background gzio halt help
+          jpeg keystatus linux loadenv ls lsefi minicmd normal part_gpt part_msdos
+          password_pbkdf2 png probe read reboot regexp search search_fs_file
+          search_fs_uuid search_label serial sleep smbios terminal test tpm true
+          video zstd)
+
+prepare() {
+	mkdir -p shim
+	bsdtar -xf "shim-x64-$_shimver.x86_64.rpm" -C shim
+}
+
+build() {
+	# Arch's SBAT data for its GRUB (the generations shim checks against
+	# revocations), plus Liora's own line.
+	cat /usr/share/grub/sbat.csv - >sbat.csv <<<"grub.liora,1,Liora Linux,grub,$_grubver,$url"
+	# Arch's file can lag behind the generation of the GRUB code itself,
+	# which grub-mkimage reports: use that one.
+	local level
+	level="$(grub-mkimage -O x86_64-efi -o grubx64.efi -p /grub -c early.cfg --sbat sbat.csv "${_modules[@]}" 2>&1 |
+		sed -n 's/.*build-time Global SBAT level \([0-9]*\).*/\1/p')"
+	if [[ -n $level ]]; then
+		sed -i "s/^grub,[0-9]*,/grub,$level,/" sbat.csv
+		grub-mkimage -O x86_64-efi -o grubx64.efi -p /grub -c early.cfg --sbat sbat.csv "${_modules[@]}"
+	fi
+	sbsign --key "${LIORA_SB_KEY_FILE:?}" --cert "${LIORA_SB_CERT:?}" --output grubx64.signed.efi grubx64.efi
+}
+
+package() {
+	local share="$pkgdir/usr/share/liora-secureboot"
+	install -Dm644 "shim/usr/lib/efi/shim/$_shimver/EFI/fedora/shimx64.efi" "$share/shimx64.efi"
+	install -Dm644 "shim/usr/lib/efi/shim/$_shimver/EFI/fedora/mmx64.efi" "$share/mmx64.efi"
+	install -Dm644 grubx64.signed.efi "$share/grubx64.efi"
+	install -Dm644 liora.cer "$share/liora.cer"
+	install -Dm755 liora-secureboot "$pkgdir/usr/bin/liora-secureboot"
+	install -Dm644 liora-secureboot.hook "$pkgdir/usr/share/libalpm/hooks/90-liora-secureboot.hook"
+	install -Dm755 05_liora_lockdown "$pkgdir/etc/grub.d/05_liora_lockdown"
+	install -Dm644 60-liora-secureboot.conf "$pkgdir/usr/lib/sysctl.d/60-liora-secureboot.conf"
+}

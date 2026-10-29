@@ -1,0 +1,40 @@
+# Every six hours: if Arch Linux released a new kernel or NVIDIA modules (or
+# this repository changed), build.sh signs them and publishes the pacman
+# repository in the "repo" release.
+name: Build and sign
+
+on:
+  schedule:
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build, sign and publish
+        run: bash build.sh
+        env:
+          PUBLISH: 1
+          LIORA_SB_KEY: ${{ secrets.LIORA_SB_KEY }}
+          LIORA_GPG_KEY: ${{ secrets.LIORA_GPG_KEY }}
+          GH_TOKEN: ${{ github.token }}
+      # GitHub turns off scheduled workflows in repositories without commits
+      # for 60 days; enabling it again on every run keeps it going.
+      - name: Keep the schedule alive
+        if: github.event_name == 'schedule'
+        run: gh api -X PUT "repos/$GITHUB_REPOSITORY/actions/workflows/build.yml/enable"
+        env:
+          GH_TOKEN: ${{ github.token }}

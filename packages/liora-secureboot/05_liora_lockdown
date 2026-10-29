@@ -1,0 +1,12 @@
+#!/usr/bin/sh
+# liora-secureboot: when GRUB was started through Secure Boot (it then sets
+# "lockdown"), the kernel starts in lockdown integrity mode, as Easy
+# Anti-Cheat for Linux requires; liora-secureboot adds ${liora_lockdown} to
+# the kernel command line. Without Secure Boot nothing changes.
+cat <<'GRUB'
+set liora_lockdown=""
+if [ "${lockdown}" = "y" ]; then
+  set liora_lockdown="lockdown=integrity iommu.passthrough=0"
+fi
+export liora_lockdown
+GRUB

@@ -23,6 +23,10 @@ jobs:
     runs-on: ubuntu-latest
     container: archlinux:latest
     steps:
+      # Without git in the container, checkout downloads the files only, with
+      # no history to count.
+      - name: Install git
+        run: pacman -Sy --noconfirm --needed git
       - uses: actions/checkout@v4
         with:
           # The whole history: build.sh numbers liora-secureboot's releases

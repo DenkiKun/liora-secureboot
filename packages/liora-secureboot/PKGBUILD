@@ -9,7 +9,9 @@ _shimver=16.1-7
 _grubver="$(pacman -Q grub | awk '{ print $2 }')"
 # The shim, the GRUB that went into the image, and this recipe.
 pkgver="${_shimver//-/.}.${_grubver//[:-]/.}"
-pkgrel=1
+# build.sh counts the commits that changed this recipe: a fix reaches the
+# computers that already have the same shim and GRUB.
+pkgrel=${LIORA_RECIPE_REL:-1}
 pkgdesc='Secure Boot for Liora: shim, a signed GRUB and the liora certificate'
 arch=(x86_64)
 url='https://github.com/DenkiKun/liora-secureboot'

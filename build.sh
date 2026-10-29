@@ -53,7 +53,7 @@ if [[ "$(modules_dir "$nvidia_pkg")" != "$(modules_dir "$linux_pkg")" ]]; then
 fi
 
 recipes="$(cd "$here" && find build.sh keys packages -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
-state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') recipes=$recipes"
+state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel recipes=$recipes"
 if [[ ${PUBLISH:-} == 1 ]]; then
     published="$(gh release download "$tag" --repo "${GITHUB_REPOSITORY:?}" --pattern state.txt --output - 2>/dev/null || true)"
     if [[ $state == "$published" ]]; then

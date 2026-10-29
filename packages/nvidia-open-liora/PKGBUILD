@@ -1,0 +1,41 @@
+# Arch Linux's NVIDIA open kernel modules, signed with the Liora Secure Boot
+# key: the kernel then loads them under Secure Boot and lockdown (it trusts
+# the enrolled "liora" certificate), where DKMS-built ones are refused.
+#
+# build.sh puts Arch's package (downloaded and signature-checked by pacman)
+# next to this file, and only when its modules are for the same kernel as
+# linux-liora.
+
+_arch_pkg=(nvidia-open-[0-9]*.pkg.tar.zst)
+_info() { bsdtar -xOf "${_arch_pkg[0]}" .PKGINFO | awk -v k="$1" '$1 == k { sub(/^[^=]*= /, ""); print }'; }
+_full="$(_info pkgver)"
+
+pkgname=nvidia-open-liora
+pkgver=${_full%-*}
+pkgrel=${_full##*-}
+pkgdesc="$(_info pkgdesc), signed for Secure Boot with Liora's key"
+arch=(x86_64)
+url='https://github.com/DenkiKun/liora-secureboot'
+license=(MIT GPL-2.0-only)
+# The modules are built for one kernel: depend on exactly that one.
+mapfile -t depends < <(_info depend | grep -vx linux)
+depends+=("linux=${LIORA_KERNEL:?}")
+mapfile -t provides < <(_info provides)
+provides+=("nvidia-open=$_full")
+conflicts=(nvidia-open nvidia-open-dkms nvidia nvidia-dkms)
+replaces=(nvidia-open nvidia-open-dkms)
+options=(!strip !debug)
+source=("${_arch_pkg[0]}")
+noextract=("${_arch_pkg[0]}")
+sha256sums=(SKIP)
+
+package() {
+	bsdtar -xf "${_arch_pkg[0]}" -C "$pkgdir" --exclude .PKGINFO --exclude .BUILDINFO \
+		--exclude .MTREE --exclude .INSTALL
+	local module
+	while IFS= read -r -d '' module; do
+		zstd -q -d --rm "$module"
+		"${LIORA_SIGN_FILE:?}" sha512 "${LIORA_SB_KEY_FILE:?}" "${LIORA_SB_CERT:?}" "${module%.zst}"
+		zstd -q -19 --rm "${module%.zst}"
+	done < <(find "$pkgdir/usr/lib/modules" -name '*.ko.zst' -print0)
+}

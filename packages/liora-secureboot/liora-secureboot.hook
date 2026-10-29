@@ -1,0 +1,10 @@
+[Trigger]
+Operation = Install
+Operation = Upgrade
+Type = Package
+Target = liora-secureboot
+
+[Action]
+Description = Updating Liora's Secure Boot files on the EFI system partition...
+When = PostTransaction
+Exec = /usr/bin/liora-secureboot update

@@ -1,0 +1,124 @@
+#!/usr/bin/bash
+# Secure Boot for Liora Linux.
+#
+#   liora-secureboot install   set it up: boot files on the EFI system
+#                              partition, a "Liora" boot entry, lockdown under
+#                              Secure Boot, and a request to enroll the liora
+#                              certificate (MokManager asks to confirm it on
+#                              the next boot, password: liora)
+#   liora-secureboot update    refresh the boot files (pacman runs it)
+#   liora-secureboot enroll    request the enrollment again
+#   liora-secureboot status    what is in place
+#
+# The boot chain: firmware → shim (Fedora's, signed by Microsoft) → GRUB
+# (signed with Liora's key) → the Liora menu → linux-liora (signed with
+# Liora's key). See https://github.com/DenkiKun/liora-secureboot
+set -euo pipefail
+
+share=/usr/share/liora-secureboot
+password=liora
+
+die() {
+    printf 'liora-secureboot: %s\n' "$*" >&2
+    exit 1
+}
+
+# The EFI system partition: Liora mounts it at /efi.
+esp() {
+    local dir
+    for dir in /efi /boot/efi /boot; do
+        if [[ $(findmnt -n -o FSTYPE --mountpoint "$dir" 2>/dev/null) == vfat ]]; then
+            echo "$dir"
+            return
+        fi
+    done
+    die 'no EFI system partition mounted at /efi, /boot/efi or /boot'
+}
+
+# Shim starts grubx64.efi from its own folder, and MokManager (mmx64.efi)
+# when an enrollment is pending. EFI/BOOT is the path any firmware starts
+# from the disk, also when it forgets the Liora entry.
+update() {
+    local esp dir
+    esp="$(esp)"
+    for dir in "$esp/EFI/liora" "$esp/EFI/BOOT"; do
+        install -d "$dir"
+        install -m 644 "$share/mmx64.efi" "$share/grubx64.efi" "$dir/"
+    done
+    install -m 644 "$share/shimx64.efi" "$esp/EFI/liora/shimx64.efi"
+    install -m 644 "$share/shimx64.efi" "$esp/EFI/BOOT/BOOTX64.EFI"
+    # For enrolling by hand from MokManager ("Enroll key from disk").
+    install -m 644 "$share/liora.cer" "$esp/EFI/liora/liora.cer"
+}
+
+boot_entry() {
+    local esp source disk part
+    esp="$(esp)"
+    [[ -d /sys/firmware/efi/efivars ]] || return 0
+    source="$(findmnt -n -o SOURCE --mountpoint "$esp")"
+    disk="/dev/$(lsblk -n -o PKNAME "$source" | head -n 1)"
+    part="$(cat "/sys/class/block/$(basename "$source")/partition")"
+    # The unsigned GRUB the base installation registered cannot start under
+    # Secure Boot; Liora's entry takes its place.
+    local number
+    for number in $(efibootmgr | awk 'tolower($0) ~ /\\efi\\grub\\grubx64\.efi/ { sub(/^Boot/, "", $1); sub(/\*$/, "", $1); print $1 }'); do
+        efibootmgr --quiet --delete-bootnum --bootnum "$number" || true
+    done
+    if ! efibootmgr | grep -qi 'EFI\\liora\\shimx64.efi'; then
+        efibootmgr --quiet --create --disk "$disk" --part "$part" --label Liora \
+            --loader '\EFI\liora\shimx64.efi' ||
+            printf 'liora-secureboot: no firmware boot entry (EFI/BOOT/BOOTX64.EFI still starts Liora)\n'
+    fi
+}
+
+# ${liora_lockdown} is set by /etc/grub.d/05_liora_lockdown when GRUB runs
+# under Secure Boot; written escaped so grub-mkconfig keeps it for GRUB.
+kernel_line() {
+    local grub=/etc/default/grub
+    grep -q 'liora_lockdown' "$grub" && return 0
+    sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT="\(.*\)"$/GRUB_CMDLINE_LINUX_DEFAULT="\1 \\${liora_lockdown}"/' "$grub"
+    grep -q 'liora_lockdown' "$grub" || die "could not add the lockdown setting to $grub"
+}
+
+enroll() {
+    if mokutil --test-key "$share/liora.cer" 2>&1 | grep -q 'already enrolled'; then
+        printf 'liora-secureboot: the liora certificate is already enrolled.\n'
+        return 0
+    fi
+    # MokManager waits for a key instead of skipping after 10 seconds.
+    mokutil --timeout -1 >/dev/null 2>&1 || true
+    if ! printf '%s\n%s\n' "$password" "$password" | mokutil --import "$share/liora.cer"; then
+        printf 'liora-secureboot: could not ask for the enrollment now. With Secure Boot on, shim opens MokManager:\n'
+        printf '  "Enroll key from disk" > EFI > liora > liora.cer > Continue > Yes\n'
+        return 1
+    fi
+    printf 'liora-secureboot: on the next boot choose "Enroll MOK", then "Continue", "Yes", and type the password: %s\n' "$password"
+}
+
+status() {
+    local esp
+    esp="$(esp)"
+    printf 'Secure Boot:        %s\n' "$(mokutil --sb-state 2>/dev/null | head -n 1 || echo unknown)"
+    printf 'liora certificate:  %s\n' "$(mokutil --test-key "$share/liora.cer" 2>&1 | head -n 1)"
+    printf 'Kernel lockdown:    %s\n' "$(cat /sys/kernel/security/lockdown 2>/dev/null || echo unknown)"
+    printf 'kexec disabled:     %s\n' "$(cat /proc/sys/kernel/kexec_load_disabled)"
+    printf 'TPM:                %s\n' "$([[ -e /sys/class/tpm/tpm0 ]] && cat /sys/class/tpm/tpm0/tpm_version_major 2>/dev/null | sed 's/^/TPM /' || echo none)"
+    printf 'Boot files:         %s\n' "$([[ -e $esp/EFI/liora/shimx64.efi ]] && echo "$esp/EFI/liora" || echo missing)"
+}
+
+(( EUID == 0 )) || die 'run it as root: sudo liora-secureboot ...'
+case ${1:-} in
+install)
+    update
+    boot_entry
+    kernel_line
+    grub-mkconfig -o "$(esp)/grub/grub.cfg"
+    # The unsigned GRUB of the base installation is no longer used.
+    rm -rf "$(esp)/EFI/GRUB"
+    enroll || true
+    ;;
+update) update ;;
+enroll) enroll ;;
+status) status ;;
+*) die 'usage: liora-secureboot install | update | enroll | status' ;;
+esac

@@ -22,7 +22,10 @@ chmod 755 "$work"
 
 pacman -Syu --noconfirm --needed base-devel sbsigntools grub linux-headers zstd github-cli git >/dev/null
 git config --global --add safe.directory "$here"
-recipe_rel="$(git -C "$here" rev-list --count HEAD -- packages/liora-secureboot 2>/dev/null || echo 1)"
+# Liora's own packages are numbered by the commits that changed their recipes.
+recipe_rel() { git -C "$here" rev-list --count HEAD -- "packages/$1" 2>/dev/null || echo 1; }
+recipe_rel="$(recipe_rel liora-secureboot)"
+drivers_rel="$(recipe_rel liora-drivers)"
 id builder >/dev/null 2>&1 || useradd -m builder
 
 # The keys, readable by the unprivileged user makepkg runs as.
@@ -53,7 +56,7 @@ if [[ "$(modules_dir "$nvidia_pkg")" != "$(modules_dir "$linux_pkg")" ]]; then
 fi
 
 recipes="$(cd "$here" && find build.sh keys packages -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
-state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel recipes=$recipes"
+state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel liora-drivers-rel=$drivers_rel recipes=$recipes"
 if [[ ${PUBLISH:-} == 1 ]]; then
     published="$(gh release download "$tag" --repo "${GITHUB_REPOSITORY:?}" --pattern state.txt --output - 2>/dev/null || true)"
     if [[ $state == "$published" ]]; then
@@ -64,15 +67,16 @@ fi
 printf 'Building: %s\n' "$state"
 
 build() {
-    local name=$1 dir="$work/build/$1"
+    local name=$1 dir="$work/build/$1" rel=$recipe_rel
     shift
+    [[ $name == liora-drivers ]] && rel=$drivers_rel
     install -d -o builder "$work/build"
     cp -r "$here/packages/$name" "$dir"
     [[ $name == liora-secureboot ]] && cp "$here/keys/liora.cer" "$dir/"
     (( $# )) && cp "$@" "$dir/"
     chown -R builder "$dir"
     runuser -u builder -- env LIORA_SB_KEY_FILE="$LIORA_SB_KEY_FILE" LIORA_SB_CERT="$LIORA_SB_CERT" \
-        LIORA_KERNEL="$kernel" LIORA_RECIPE_REL="$recipe_rel" LIORA_SIGN_FILE="$(ls /usr/lib/modules/*/build/scripts/sign-file | head -n 1)" \
+        LIORA_KERNEL="$kernel" LIORA_RECIPE_REL="$rel" LIORA_SIGN_FILE="$(ls /usr/lib/modules/*/build/scripts/sign-file | head -n 1)" \
         bash -c "cd '$dir' && makepkg --nodeps --noconfirm --noprogressbar" >/dev/null
     cp "$dir/$name"-[0-9]*.pkg.tar.zst "$out/"
 }
@@ -82,6 +86,7 @@ install -d "$out"
 build linux-liora "$linux_pkg"
 build nvidia-open-liora "$nvidia_pkg"
 build liora-secureboot
+build liora-drivers
 
 for package in "$out"/*.pkg.tar.zst; do
     gpg --batch --yes --local-user "$fpr" --detach-sign "$package"

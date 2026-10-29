@@ -1,0 +1,60 @@
+#!/usr/bin/bash
+# Installs NVIDIA's driver when this computer has an NVIDIA card that NVIDIA's
+# open kernel modules support and the driver is not installed yet; does
+# nothing otherwise. Run by liora-drivers.service: right after the update that
+# installs this package, then a while after every boot until it succeeds (it
+# needs the network).
+set -euo pipefail
+
+# LIORA_DRIVERS_SYSFS: another /sys, for testing.
+sysfs="${LIORA_DRIVERS_SYSFS:-/sys}"
+
+# The open kernel modules support Turing (GeForce GTX 16, RTX 20) and every
+# NVIDIA generation after it, whose PCI device IDs start at 0x1e00; older
+# cards stay on nouveau.
+supported_nvidia_card() {
+    local dev
+    for dev in "$sysfs"/bus/pci/devices/*; do
+        [[ -r $dev/class && $(<"$dev/class") == 0x03* && $(<"$dev/vendor") == 0x10de ]] || continue
+        (( $(<"$dev/device") >= 0x1e00 )) && return 0
+    done
+    return 1
+}
+
+supported_nvidia_card || exit 0
+pacman -Q nvidia-utils >/dev/null 2>&1 && exit 0
+
+# Started from the pacman transaction that installs this package: wait for it
+# to finish.
+for _ in {1..900}; do
+    [[ -e /var/lib/pacman/db.lck ]] || break
+    sleep 1
+done
+
+# What the installer's NVIDIA choice installs (nvidia-utils comes with the
+# modules). Under Liora's signed kernel, the modules signed for Secure Boot.
+packages=(libva-nvidia-driver)
+if pacman -Q linux-liora >/dev/null 2>&1; then
+    packages+=(nvidia-open-liora)
+else
+    packages+=(nvidia-open)
+fi
+# Steam's 32-bit drivers, when the system has them for the open-source driver.
+pacman -Q lib32-mesa >/dev/null 2>&1 && packages+=(lib32-nvidia-utils)
+echo "liora-drivers: NVIDIA card found, installing ${packages[*]}"
+# The whole system with them: the modules are built for the newest kernel.
+pacman -Syu --noconfirm --needed "${packages[@]}"
+
+# Tell whoever is logged in.
+for bus in /run/user/*/bus; do
+    [[ -S $bus ]] || continue
+    uid="${bus#/run/user/}"
+    uid="${uid%/bus}"
+    (( uid >= 1000 )) || continue
+    runuser -u "$(id -nu "$uid")" -- env DBUS_SESSION_BUS_ADDRESS="unix:path=$bus" \
+        gdbus call --session --dest org.freedesktop.Notifications \
+        --object-path /org/freedesktop/Notifications \
+        --method org.freedesktop.Notifications.Notify \
+        'Liora' 0 'liora-logo' 'Driver NVIDIA instalado' \
+        'Reinicia o computador para a placa gráfica passar a usá-lo.' '[]' '{}' 0 >/dev/null || true
+done

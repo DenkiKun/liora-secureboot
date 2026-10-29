@@ -1,0 +1,10 @@
+# A timer, not WantedBy=multi-user.target: the target would wait for the
+# download before the login screen.
+[Unit]
+Description=Liora: check the graphics driver after boot
+
+[Timer]
+OnBootSec=1min
+
+[Install]
+WantedBy=timers.target

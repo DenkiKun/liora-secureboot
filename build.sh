@@ -2,7 +2,7 @@
 # Builds Liora's Secure Boot packages from Arch Linux's current kernel and
 # NVIDIA modules, signs them with Liora's keys, and with PUBLISH=1 publishes
 # them as a pacman repository: the assets of this GitHub repository's "repo"
-# release. GitHub Actions runs it every few hours (.github/workflows/build.yml);
+# release. GitHub Actions runs it every hour (.github/workflows/build.yml);
 # it does nothing when Arch has released nothing new.
 #
 # Runs as root in an Arch Linux container. Needs:

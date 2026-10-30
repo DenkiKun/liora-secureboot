@@ -21,7 +21,7 @@ The private keys exist as repository secrets, used only by the workflow, and as 
 
 ## How it updates
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) runs [`build.sh`](build.sh) every six hours in an Arch Linux container. It downloads Arch's current `linux` and `nvidia-open` packages through pacman (which checks Arch's signatures), signs them, signs the packages and the database with the package key, and replaces the assets of the [`repo` release](../../releases/tag/repo). When Arch has released nothing new, it stops after comparing versions.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs [`build.sh`](build.sh) every hour in an Arch Linux container. It downloads Arch's current `linux` and `nvidia-open` packages through pacman (which checks Arch's signatures), signs them, signs the packages and the database with the package key, and replaces the assets of the [`repo` release](../../releases/tag/repo). When Arch has released nothing new, it stops after comparing versions.
 
 ## Use
 

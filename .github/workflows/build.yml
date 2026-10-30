@@ -1,11 +1,13 @@
-# Every six hours: if Arch Linux released a new kernel or NVIDIA modules (or
-# this repository changed), build.sh signs them and publishes the pacman
-# repository in the "repo" release.
+# Every hour: if Arch Linux released a new kernel or NVIDIA modules (or this
+# repository changed), build.sh signs them and publishes the pacman
+# repository in the "repo" release. Hourly because nvidia-open-liora needs
+# Arch's nvidia-utils at the same version: until it is rebuilt, `pacman -Syu`
+# on NVIDIA computers stops on that dependency.
 name: Build and sign
 
 on:
   schedule:
-    - cron: '17 */6 * * *'
+    - cron: '17 * * * *'
   workflow_dispatch:
   push:
     branches: [main]

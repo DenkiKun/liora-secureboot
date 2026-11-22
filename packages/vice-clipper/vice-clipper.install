@@ -1,0 +1,10 @@
+# On Liora, Vice was chosen in the installer: its recorder starts at every
+# login, ready for the replay hotkey.
+post_install() {
+	systemctl --global enable vice.service >/dev/null 2>&1 || true
+}
+
+post_upgrade() {
+	echo ':: Vice records with the new version from the next login (or when Vice is reopened).'
+	echo ':: On Wayland it records through the desktop portal: the first time, choose the screen to record.'
+}

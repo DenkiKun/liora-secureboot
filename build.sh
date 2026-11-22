@@ -2,9 +2,9 @@
 # Builds Liora's Secure Boot packages from Arch Linux's current kernel and
 # NVIDIA modules, signs them with Liora's keys, and with PUBLISH=1 publishes
 # them as a pacman repository: the assets of this GitHub repository's "repo"
-# release. Also Waywallen (live wallpapers) and its plugins, from their
-# publisher's newest releases (upstream.sh), so installed computers get each
-# new Waywallen with their next update. GitHub Actions runs it every hour
+# release. Also Waywallen (live wallpapers) and its plugins, and Vice (game
+# clips), from their publishers' newest releases (upstream.sh), so installed
+# computers get each new version with their next update. GitHub Actions runs it every hour
 # (.github/workflows/build.yml); it does nothing when nothing new came out.
 #
 # Runs as root in an Arch Linux container. Needs:
@@ -24,7 +24,8 @@ trap 'rm -rf "$work"' EXIT
 # pacman downloads as its unprivileged alpm user.
 chmod 755 "$work"
 
-pacman -Syu --noconfirm --needed base-devel sbsigntools grub linux-headers zstd github-cli git jq squashfs-tools >/dev/null
+pacman -Syu --noconfirm --needed base-devel sbsigntools grub linux-headers zstd github-cli git jq squashfs-tools \
+    python-build python-installer python-setuptools python-wheel >/dev/null
 git config --global --add safe.directory "$here"
 # Liora's own packages are numbered by the commits that changed their recipes.
 recipe_rel() { git -C "$here" rev-list --count HEAD -- "packages/$1" 2>/dev/null || echo 1; }
@@ -59,17 +60,18 @@ if [[ "$(modules_dir "$nvidia_pkg")" != "$(modules_dir "$linux_pkg")" ]]; then
     exit 0
 fi
 
-# Waywallen's newest releases: "<version> <url> <sha256>" each.
-waywallen_packages=(waywallen-bin plasma-wallpaper-waywallen gnome-shell-extension-waywallen waywallen-open-wallpaper-engine)
+# The newest releases of Waywallen and its plugins, and of Vice:
+# "<version> <url> <sha256>" each.
+upstream_packages=(waywallen-bin plasma-wallpaper-waywallen gnome-shell-extension-waywallen waywallen-open-wallpaper-engine vice-clipper)
 declare -A upstream
-waywallen_state=
-for name in "${waywallen_packages[@]}"; do
+upstream_state=
+for name in "${upstream_packages[@]}"; do
     upstream[$name]="$(bash "$here/upstream.sh" "$name")"
-    waywallen_state+=" $name=${upstream[$name]%% *}"
+    upstream_state+=" $name=${upstream[$name]%% *}"
 done
 
 recipes="$(cd "$here" && find build.sh upstream.sh keys packages prebuilt -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
-state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel liora-drivers-rel=$drivers_rel$waywallen_state recipes=$recipes"
+state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel liora-drivers-rel=$drivers_rel$upstream_state recipes=$recipes"
 if [[ ${PUBLISH:-} == 1 ]]; then
     published="$(gh release download "$tag" --repo "${GITHUB_REPOSITORY:?}" --pattern state.txt --output - 2>/dev/null || true)"
     if [[ $state == "$published" ]]; then
@@ -106,7 +108,7 @@ build linux-liora "$linux_pkg"
 build nvidia-open-liora "$nvidia_pkg"
 build liora-secureboot
 build liora-drivers
-for name in "${waywallen_packages[@]}"; do
+for name in "${upstream_packages[@]}"; do
     build "$name"
 done
 # Liora's own packages built from the Liora repository (see prebuilt/README.md):

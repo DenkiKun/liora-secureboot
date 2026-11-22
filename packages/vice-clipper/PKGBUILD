@@ -1,0 +1,58 @@
+# Vice (GPL-3.0), game clips for Linux: instant replay of the last seconds,
+# session recording, highlights and sharing. Installed when its card in the
+# Liora installer is on. Based on the AUR recipe vice-clipper (reviewed
+# 2026-10-29); GitHub publishes no checksum for tag archives, so only HTTPS
+# from GitHub vouches for the download.
+#
+# With Liora's defaults (liora-defaults.py): sharing off until turned on, and
+# on Wayland the screen recorded through the desktop's portal instead of KMS
+# capture, which made windows flicker on KDE Plasma.
+
+# The newest official release, found by upstream.sh: build.sh rebuilds it
+# when a new release comes out, so installed computers get it with their next
+# `pacman -Syu`. LIORA_UPSTREAM is "<version> <url> <sha256 or SKIP>".
+read -r _version _url _sha256 <<<"${LIORA_UPSTREAM:?build it through build.sh or LioraLinux/scripts/build-local-repo.sh}"
+
+pkgname=vice-clipper
+pkgver=$_version
+# build.sh counts the commits that changed this recipe. One more: until
+# 2026-11-22 liora-app built Vice on each computer as release-1, and the
+# first package from here must replace that one.
+pkgrel=$(( ${LIORA_RECIPE_REL:-1} + 1 ))
+pkgdesc='Game clips for Linux: instant replay, session recording and sharing'
+arch=(x86_64)
+url='https://github.com/splitshotz/Vice'
+license=('GPL-3.0-or-later')
+install=vice-clipper.install
+depends=(python systemd python-evdev python-aiohttp python-click python-psutil
+         python-pywebview python-tomli-w python-pyqt6-webengine python-qtpy
+         ffmpeg gpu-screen-recorder webkit2gtk-4.1 gstreamer gst-plugins-base
+         gst-plugins-good wl-clipboard xclip cloudflared xdotool xorg-xprop wmctrl)
+optdepends=('wf-recorder: Wayland fallback recording backend'
+            'python-gobject: keyboard overlay'
+            'python-cairo: keyboard overlay'
+            'gtk-layer-shell: keyboard overlay on Wayland')
+makedepends=(python-build python-installer python-setuptools python-wheel)
+# Pure Python: nothing to strip.
+options=(!strip !debug)
+source=("Vice-$pkgver.tar.gz::$_url"
+        liora-defaults.py)
+sha256sums=("$_sha256"
+            SKIP)
+
+build() {
+	cd "Vice-$pkgver"
+	python -m build --wheel --no-isolation
+}
+
+package() {
+	cd "Vice-$pkgver"
+	python -m installer --destdir="$pkgdir" dist/*.whl
+	install -Dm644 vice.desktop "$pkgdir/usr/share/applications/vice.desktop"
+	install -Dm644 assets/vice.svg "$pkgdir/usr/share/icons/hicolor/scalable/apps/vice.svg"
+	# Hotkeys and game detection read the keyboard: the person at the
+	# computer gets access to input devices.
+	install -Dm644 packaging/vice.rules "$pkgdir/usr/lib/udev/rules.d/70-vice-input.rules"
+	install -Dm644 packaging/vice.service "$pkgdir/usr/lib/systemd/user/vice.service"
+	python "$srcdir/liora-defaults.py" "$(dirname "$(find "$pkgdir" -path '*/site-packages/vice/config.py' -print -quit)")"
+}

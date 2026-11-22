@@ -37,16 +37,21 @@ esp() {
 
 # Shim starts grubx64.efi from its own folder, and MokManager (mmx64.efi)
 # when an enrollment is pending. EFI/BOOT is the path any firmware starts
-# from the disk, also when it forgets the Liora entry.
+# from the disk, also when it forgets the Liora entry; on an EFI partition
+# shared with Windows that path is Windows' own (its fallback), so it is only
+# written when it is free, when there is no Windows, or when it already is
+# Liora's (shim's grubx64.efi next to it). FAT ignores case, so EFI/Boot
+# counts too.
 update() {
-    local esp dir
+    local esp
     esp="$(esp)"
-    for dir in "$esp/EFI/liora" "$esp/EFI/BOOT"; do
-        install -d "$dir"
-        install -m 644 "$share/mmx64.efi" "$share/grubx64.efi" "$dir/"
-    done
-    install -m 644 "$share/shimx64.efi" "$esp/EFI/liora/shimx64.efi"
-    install -m 644 "$share/shimx64.efi" "$esp/EFI/BOOT/BOOTX64.EFI"
+    install -d "$esp/EFI/liora"
+    install -m 644 "$share/mmx64.efi" "$share/grubx64.efi" "$share/shimx64.efi" "$esp/EFI/liora/"
+    if [[ ! -e $esp/EFI/BOOT/BOOTX64.EFI || ! -d $esp/EFI/Microsoft || -e $esp/EFI/BOOT/grubx64.efi ]]; then
+        install -d "$esp/EFI/BOOT"
+        install -m 644 "$share/mmx64.efi" "$share/grubx64.efi" "$esp/EFI/BOOT/"
+        install -m 644 "$share/shimx64.efi" "$esp/EFI/BOOT/BOOTX64.EFI"
+    fi
     # For enrolling by hand from MokManager ("Enroll key from disk").
     install -m 644 "$share/liora.cer" "$esp/EFI/liora/liora.cer"
 }
@@ -95,18 +100,62 @@ enroll() {
     printf 'liora-secureboot: on the next boot choose "Enroll MOK", then "Continue", "Yes", and type the password: %s\n' "$password"
 }
 
+# A firmware variable's value without its 4 bytes of attributes.
+efivar() {
+    local file
+    file=(/sys/firmware/efi/efivars/"$1"-*)
+    [[ -r ${file[0]} ]] && tail -c +5 "${file[0]}"
+}
+
+# Whether a signature database (db, dbDefault) holds Microsoft's third-party
+# UEFI CA, which signs the shim Liora boots through. Names in the DER
+# certificates are plain text.
+has_third_party_ca() {
+    efivar "$1" | grep -aq 'Microsoft Corporation UEFI CA'
+}
+
+# The firmware's Secure Boot keys, in words, with what to do about them.
+firmware_keys() {
+    if [[ "$(efivar SetupMode | od -An -tu1 | tr -d ' ')" == 1 ]]; then
+        printf 'Setup Mode: the firmware has no Secure Boot keys, so Secure Boot is off.\n'
+        if efivar dbDefault >/dev/null && ! has_third_party_ca dbDefault; then
+            printf '                    Careful: its factory keys lack Microsoft'"'"'s third-party CA (which signs\n'
+            printf '                    Liora'"'"'s shim). Restoring them alone stops Liora from booting with Secure\n'
+            printf '                    Boot on. First look in the firmware settings for an option such as\n'
+            printf '                    "Enable MS UEFI CA key" / "Allow Microsoft 3rd Party UEFI CA".\n'
+        else
+            printf '                    Restore the factory keys in the firmware settings, then turn Secure Boot on.\n'
+        fi
+    elif efivar db >/dev/null && ! has_third_party_ca db; then
+        printf "keys enrolled, but without Microsoft's third-party CA: Liora's shim won't start\n"
+        printf '                    with Secure Boot on. Look for "Enable MS UEFI CA key" in the firmware settings.\n'
+    else
+        printf "keys enrolled, Microsoft's third-party CA included\n"
+    fi
+}
+
 status() {
     local esp
     esp="$(esp)"
     printf 'Secure Boot:        %s\n' "$(mokutil --sb-state 2>/dev/null | head -n 1 || echo unknown)"
-    printf 'liora certificate:  %s\n' "$(mokutil --test-key "$share/liora.cer" 2>&1 | head -n 1)"
+    [[ -d /sys/firmware/efi/efivars ]] && printf 'Firmware keys:      %s\n' "$(firmware_keys)"
+    if (( EUID != 0 )); then
+        printf 'liora certificate:  (sudo liora-secureboot status to check)\n'
+    else
+        printf 'liora certificate:  %s\n' "$(mokutil --test-key "$share/liora.cer" 2>&1 | head -n 1)"
+    fi
     printf 'Kernel lockdown:    %s\n' "$(cat /sys/kernel/security/lockdown 2>/dev/null || echo unknown)"
     printf 'kexec disabled:     %s\n' "$(cat /proc/sys/kernel/kexec_load_disabled)"
     printf 'TPM:                %s\n' "$([[ -e /sys/class/tpm/tpm0 ]] && cat /sys/class/tpm/tpm0/tpm_version_major 2>/dev/null | sed 's/^/TPM /' || echo none)"
-    printf 'Boot files:         %s\n' "$([[ -e $esp/EFI/liora/shimx64.efi ]] && echo "$esp/EFI/liora" || echo missing)"
+    if (( EUID != 0 )); then
+        printf 'Boot files:         (sudo liora-secureboot status to check)\n'
+    else
+        printf 'Boot files:         %s\n' "$([[ -e $esp/EFI/liora/shimx64.efi ]] && echo "$esp/EFI/liora" || echo missing)"
+    fi
 }
 
-(( EUID == 0 )) || die 'run it as root: sudo liora-secureboot ...'
+# status only reads; the rest changes the system.
+[[ ${1:-} == status ]] || (( EUID == 0 )) || die 'run it as root: sudo liora-secureboot ...'
 case ${1:-} in
 install)
     update

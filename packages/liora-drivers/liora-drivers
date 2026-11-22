@@ -1,9 +1,23 @@
 #!/usr/bin/bash
 # Installs NVIDIA's driver when this computer has an NVIDIA card that NVIDIA's
-# open kernel modules support and the driver is not installed yet; does
-# nothing otherwise. Run by liora-drivers.service: right after the update that
-# installs this package, then a while after every boot until it succeeds (it
-# needs the network).
+# open kernel modules support and the driver is not installed yet, and sets
+# up what goes with it (also on computers that have it already):
+#
+# - NVIDIA's suspend services: the driver keeps video memory across suspend
+#   (PreserveVideoMemoryAllocations=1), and without them the screen came
+#   back black;
+# - NVIDIA's driver in the initramfs (early KMS): loaded later from the
+#   disk, a second card that was ready first got the login screen, which
+#   then showed nothing on the monitor;
+# - Dynamic Boost (nvidia-powerd) on laptops that have it;
+# - next to another card (a laptop's integrated graphics, a second card):
+#   that card's Vulkan driver (without it Vulkan only saw the NVIDIA card,
+#   and power saving kept waking it), prime-run and switcheroo-control
+#   ("Run on the dedicated graphics card" in the menu).
+#
+# Does nothing without a supported NVIDIA card. Run by liora-drivers.service:
+# right after the update that installs this package, then a minute after
+# every boot.
 set -euo pipefail
 
 # LIORA_DRIVERS_SYSFS: another /sys, for testing.
@@ -21,15 +35,98 @@ supported_nvidia_card() {
     return 1
 }
 
+# Vulkan drivers for the cards that aren't NVIDIA's (AMD, Intel).
+other_card_packages() {
+    local dev vendor lib32=0
+    pacman -Q lib32-mesa >/dev/null 2>&1 && lib32=1
+    for dev in "$sysfs"/bus/pci/devices/*; do
+        [[ -r $dev/class && $(<"$dev/class") == 0x03* ]] || continue
+        vendor="$(<"$dev/vendor")"
+        case $vendor in
+        0x1002) echo vulkan-radeon; (( lib32 )) && echo lib32-vulkan-radeon ;;
+        0x8086) echo vulkan-intel; (( lib32 )) && echo lib32-vulkan-intel ;;
+        *) continue ;;
+        esac
+        echo nvidia-prime
+        echo switcheroo-control
+    done | sort -u
+}
+
+# The initramfs file the Liora installer writes, for computers installed
+# before it did: NVIDIA's modules (and the other card's) loaded early, and the
+# kms hook left out when every other card's driver is known (it only added
+# nouveau and its firmware). "?" modules don't stop mkinitcpio when missing.
+early_kms() {
+    local conf=/etc/mkinitcpio.conf.d/20-liora-nvidia.conf dev driver modules=() drop_kms=1
+    # Already set up, here or by hand (any conf.d file that names nvidia).
+    grep -qs 'nvidia' /etc/mkinitcpio.conf.d/*.conf && return 0
+    grep -qs '^MODULES=.*nvidia' /etc/mkinitcpio.conf && return 0
+    for dev in "$sysfs"/bus/pci/devices/*; do
+        [[ -r $dev/class && $(<"$dev/class") == 0x03* && $(<"$dev/vendor") != 0x10de ]] || continue
+        driver="$(basename "$(readlink -f "$dev/driver" 2>/dev/null)" 2>/dev/null)"
+        case $driver in
+        amdgpu | radeon | i915 | xe) [[ " ${modules[*]} " == *" $driver? "* ]] || modules+=("$driver?") ;;
+        *) drop_kms=0 ;;
+        esac
+    done
+    modules+=('nvidia?' 'nvidia_modeset?' 'nvidia_uvm?' 'nvidia_drm?')
+    install -d /etc/mkinitcpio.conf.d
+    {
+        echo "# Liora: NVIDIA's driver (and the other card's) in the initramfs, so the"
+        echo "# login screen starts on the card the monitor is on (liora-drivers)."
+        echo "MODULES+=(${modules[*]})"
+        if (( drop_kms )); then
+            echo "# The kms hook only added nouveau (blacklisted with NVIDIA's driver) and its firmware."
+            echo '_liora_hooks=(); for _liora_hook in "${HOOKS[@]}"; do [[ $_liora_hook == kms ]] || _liora_hooks+=("$_liora_hook"); done'
+            echo 'HOOKS=("${_liora_hooks[@]}"); unset _liora_hooks _liora_hook'
+        fi
+    } >"$conf"
+    echo "liora-drivers: NVIDIA's driver now loads from the initramfs ($conf)"
+    mkinitcpio -P >/dev/null 2>&1 || echo 'liora-drivers: mkinitcpio reported a problem; see mkinitcpio -P'
+}
+
+wait_for_pacman() {
+    for _ in {1..900}; do
+        [[ -e /var/lib/pacman/db.lck ]] || return 0
+        sleep 1
+    done
+    return 1
+}
+
+# What goes with the driver: services, and the other card's packages. Each
+# boot, so computers that had the driver before this get it too.
+set_up() {
+    local wanted=() missing=() package
+    mapfile -t wanted < <(other_card_packages)
+    for package in "${wanted[@]}"; do
+        pacman -Q "$package" >/dev/null 2>&1 || missing+=("$package")
+    done
+    if (( ${#missing[@]} )) && wait_for_pacman; then
+        echo "liora-drivers: installing ${missing[*]} for the other graphics card"
+        # From the package lists of the last update (no -y: never half an
+        # upgrade); if they are out of date, the next weekly update fixes it.
+        pacman -S --noconfirm --needed "${missing[@]}" || echo 'liora-drivers: trying again next boot'
+    fi
+    wait_for_pacman && early_kms
+    local units=(nvidia-suspend.service nvidia-resume.service nvidia-hibernate.service)
+    [[ -e $sysfs/bus/acpi/devices/NVDA0820:00 ]] && units+=(nvidia-powerd.service)
+    [[ " ${wanted[*]} " == *" switcheroo-control "* ]] && units+=(switcheroo-control.service)
+    local unit
+    for unit in "${units[@]}"; do
+        systemctl is-enabled --quiet "$unit" 2>/dev/null && continue
+        systemctl enable "$unit" >/dev/null 2>&1 && echo "liora-drivers: enabled $unit" || true
+    done
+}
+
 supported_nvidia_card || exit 0
-pacman -Q nvidia-utils >/dev/null 2>&1 && exit 0
+if pacman -Q nvidia-utils >/dev/null 2>&1; then
+    set_up
+    exit 0
+fi
 
 # Started from the pacman transaction that installs this package: wait for it
 # to finish.
-for _ in {1..900}; do
-    [[ -e /var/lib/pacman/db.lck ]] || break
-    sleep 1
-done
+wait_for_pacman || exit 0
 
 # What the installer's NVIDIA choice installs (nvidia-utils comes with the
 # modules). Under Liora's signed kernel, the modules signed for Secure Boot.
@@ -41,9 +138,11 @@ else
 fi
 # Steam's 32-bit drivers, when the system has them for the open-source driver.
 pacman -Q lib32-mesa >/dev/null 2>&1 && packages+=(lib32-nvidia-utils)
+mapfile -t -O "${#packages[@]}" packages < <(other_card_packages)
 echo "liora-drivers: NVIDIA card found, installing ${packages[*]}"
 # The whole system with them: the modules are built for the newest kernel.
 pacman -Syu --noconfirm --needed "${packages[@]}"
+set_up
 
 # Tell whoever is logged in.
 for bus in /run/user/*/bus; do

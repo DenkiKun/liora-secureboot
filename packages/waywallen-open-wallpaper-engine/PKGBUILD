@@ -1,0 +1,38 @@
+# open-wallpaper-engine (GPL-2.0), Waywallen's plugin for Wallpaper Engine
+# scene and web wallpapers, from its official release. Installed as a system
+# plugin: Waywallen loads plugins from <its prefix>/share/waywallen/plugins,
+# which for waywallen-bin is inside /opt/waywallen-bin. Its own update check
+# installs newer versions into the person's ~/.local/share/waywallen/plugins.
+#
+# The renderers use the FFmpeg that waywallen-bin bundles (the daemon passes on
+# its library path); the rest comes from the system.
+
+# The newest official release, found by upstream.sh (with the SHA-256 GitHub
+# recorded for the file): build.sh rebuilds it when a new release comes out,
+# so installed computers get it with their next update. LIORA_UPSTREAM is
+# "<version> <url> <sha256>".
+read -r _version _url _sha256 <<<"${LIORA_UPSTREAM:?build it through build.sh or LioraLinux/scripts/build-local-repo.sh}"
+
+pkgname=waywallen-open-wallpaper-engine
+_id=org.waywallen.open-wallpaper-engine
+pkgver=$_version
+pkgrel=${LIORA_RECIPE_REL:-1}
+pkgdesc='Wallpaper Engine scene and web wallpapers for Waywallen (official release)'
+arch=(x86_64)
+url='https://github.com/waywallen/open-wallpaper-engine'
+license=(GPL-2.0-only)
+depends=(waywallen-bin alsa-lib at-spi2-core cairo dbus expat fontconfig freetype2
+         gcc-libs glibc libcups libx11 libxcb libxcomposite libxdamage libxext
+         libxfixes libxkbcommon libxrandr lz4 mesa nspr nss pango systemd-libs)
+options=(!strip !debug)
+source=("$_id-$pkgver.zip::$_url")
+noextract=("$_id-$pkgver.zip")
+sha256sums=("$_sha256")
+
+package() {
+	local dest="$pkgdir/opt/waywallen-bin/usr/share/waywallen/plugins/$_id"
+	install -dm755 "$dest"
+	# bsdtar keeps the archive's modes (the renderers are executable).
+	bsdtar --no-same-owner -xf "$_id-$pkgver.zip" -C "$dest"
+	chmod -R u+w,go-w "$dest"
+}

@@ -1,0 +1,35 @@
+# Waywallen's official Plasma 6 wallpaper plugin (waywallen-display), from the
+# release's self-contained build: the QML module ships inside the plugin, so
+# no separate waywallen-display package is needed. Built against Qt 6.4,
+# which newer Qt 6 releases stay compatible with.
+#
+# 0.4.6 fixed its settings page for Plasma 6.8 (waywallen-display#93): with
+# the older ones, choosing Waywallen in the wallpaper dialog was not kept,
+# and after a restart the desktop was back on the default image.
+
+# The newest official release, found by upstream.sh (with the SHA-256 GitHub
+# recorded for the file): build.sh rebuilds it when a new release comes out,
+# so installed computers get it with their next update. LIORA_UPSTREAM is
+# "<version> <url> <sha256>".
+read -r _version _url _sha256 <<<"${LIORA_UPSTREAM:?build it through build.sh or LioraLinux/scripts/build-local-repo.sh}"
+
+pkgname=plasma-wallpaper-waywallen
+pkgver=$_version
+pkgrel=${LIORA_RECIPE_REL:-1}
+pkgdesc='Plasma 6 wallpaper plugin for Waywallen (official release)'
+arch=(x86_64)
+url='https://github.com/waywallen/waywallen-display'
+license=(MIT)
+depends=(waywallen-bin plasma-workspace qt6-base qt6-declarative gcc-libs glibc)
+options=(!strip !debug)
+source=("waywallen-kde-$pkgver.zip::$_url")
+sha256sums=("$_sha256")
+
+package() {
+	local dest="$pkgdir/usr/share/plasma/wallpapers/org.waywallen.kde"
+	install -dm755 "$dest"
+	cp -r --no-preserve=ownership org.waywallen.kde/. "$dest/"
+	chmod -R u=rwX,go=rX "$dest"
+	chmod 755 "$dest/contents/ui/Plugin/WaywallenDisplayEmbed/libwaywallen-display-qml.so"
+	install -Dm644 org.waywallen.kde/LICENSE -t "$pkgdir/usr/share/licenses/$pkgname"
+}

@@ -9,6 +9,7 @@ Secure Boot for [Liora Linux](https://github.com/DenkiKun), an Arch Linux based 
 | `liora-secureboot` | Fedora's shim (signed by Microsoft), a GRUB image signed with the Liora key, the `liora` certificate and the `liora-secureboot` command that installs them. |
 | `liora-drivers` | Installs NVIDIA's driver (signed modules under `linux-liora`) on computers with a GeForce GTX 16, RTX 20 or newer card that do not have it yet. A dependency of `liora-secureboot`, so every Liora computer gets it. |
 | `liora-branding` | Liora's look (logo, glass windows, cursors, sounds, boot splash), built from the Liora repository and kept in [`prebuilt/`](prebuilt/): published here so installed computers get its updates. |
+| `waywallen-bin`, `plasma-wallpaper-waywallen`, `gnome-shell-extension-waywallen`, `waywallen-open-wallpaper-engine` | [Waywallen](https://github.com/waywallen/waywallen) (live wallpapers) and its Plasma, GNOME and Wallpaper Engine plugins, from their publishers' newest releases, checked against the SHA-256 GitHub records for each file ([`upstream.sh`](upstream.sh)). Rebuilt when a new release comes out, so installed computers get it with their next update; the Liora ISO builds the same recipes. |
 
 The boot chain: UEFI firmware → shim (Microsoft UEFI CA) → GRUB (Liora key, enrolled as a MOK) → `linux-liora` (Liora key) → modules (Arch's build key, or the Liora key for NVIDIA).
 
@@ -21,7 +22,7 @@ The private keys exist as repository secrets, used only by the workflow, and as 
 
 ## How it updates
 
-[`.github/workflows/build.yml`](.github/workflows/build.yml) runs [`build.sh`](build.sh) every hour in an Arch Linux container. It downloads Arch's current `linux` and `nvidia-open` packages through pacman (which checks Arch's signatures), signs them, signs the packages and the database with the package key, and replaces the assets of the [`repo` release](../../releases/tag/repo). When Arch has released nothing new, it stops after comparing versions.
+[`.github/workflows/build.yml`](.github/workflows/build.yml) runs [`build.sh`](build.sh) every hour in an Arch Linux container. It downloads Arch's current `linux` and `nvidia-open` packages through pacman (which checks Arch's signatures), signs them, signs the packages and the database with the package key, and replaces the assets of the [`repo` release](../../releases/tag/repo). It also looks up Waywallen's newest releases. When nothing new came out, it stops after comparing versions. It uploads the packages before the database that lists them, and removes a superseded package only one run later, so a computer that synced just before never asks for a file that is gone.
 
 ## Use
 

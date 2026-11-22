@@ -1,0 +1,69 @@
+# Waywallen, the live wallpaper manager (MIT), from its official prebuilt
+# AppImage. Installed with KDE Plasma, GNOME or Hyprland when its card
+# in the installer is on, with the desktop's Waywallen plugin and the
+# open-wallpaper-engine plugin. On Hyprland the daemon draws the wallpaper
+# itself with the bundled waywallen-layer-shell. Same name and layout as the AUR
+# package, so an AUR helper can update it later.
+#
+# The AppImage is unpacked with unsquashfs instead of being run: its
+# filesystem starts right after the ELF runtime, at the end of the section
+# header table.
+
+# The newest official release, found by upstream.sh (with the SHA-256 GitHub
+# recorded for the file): build.sh rebuilds it when a new release comes out,
+# so installed computers get it with their next update. LIORA_UPSTREAM is
+# "<version> <url> <sha256>".
+read -r _version _url _sha256 <<<"${LIORA_UPSTREAM:?build it through build.sh or LioraLinux/scripts/build-local-repo.sh}"
+
+pkgname=waywallen-bin
+pkgver=$_version
+# build.sh counts the commits that changed this recipe.
+pkgrel=${LIORA_RECIPE_REL:-1}
+pkgdesc='Live wallpaper manager for Linux (official prebuilt release)'
+arch=(x86_64)
+url='https://github.com/waywallen/waywallen'
+license=(MIT)
+# Libraries the bundle does not carry (checked with readelf on 0.5.0 and 0.6.1).
+depends=(dbus fontconfig freetype2 gcc-libs glibc harfbuzz hicolor-icon-theme
+         libdrm libglvnd libice libsm libx11 libxcb libxkbcommon libxkbcommon-x11
+         mesa vulkan-icd-loader wayland zlib)
+makedepends=(squashfs-tools)
+provides=(waywallen)
+conflicts=(waywallen)
+options=(!strip !debug)
+_appimage="waywallen-${pkgver}-x86_64.AppImage"
+source=("$_appimage::$_url"
+        waywallen-autostart.desktop)
+noextract=("$_appimage")
+sha256sums=("$_sha256"
+            'bbbabdd5d0d411d56adafb29ecf5e98669690d434fa6e9c5d08ba0da75c5f820')
+
+prepare() {
+	local shoff shentsize shnum
+	shoff=$(od -An -t u8 -j 40 -N 8 "$_appimage")
+	read -r shentsize shnum < <(od -An -t u2 -j 58 -N 4 "$_appimage")
+	rm -rf squashfs-root
+	unsquashfs -q -no-progress -o $((shoff + shentsize * shnum)) -d squashfs-root "$_appimage"
+}
+
+package() {
+	install -dm755 "$pkgdir/opt/$pkgname"
+	cp -a squashfs-root/. "$pkgdir/opt/$pkgname/"
+	# AppRun points the daemon at its bundled libraries; the plugins' renderers
+	# inherit that environment (open-wallpaper-engine uses the bundled FFmpeg).
+	install -dm755 "$pkgdir/usr/bin"
+	ln -s "/opt/$pkgname/AppRun" "$pkgdir/usr/bin/waywallen"
+
+	local share=squashfs-root/usr/share
+	install -Dm644 "$share/applications/org.waywallen.waywallen.desktop" -t "$pkgdir/usr/share/applications"
+	install -Dm644 "$share/icons/hicolor/scalable/apps/org.waywallen.waywallen.svg" -t "$pkgdir/usr/share/icons/hicolor/scalable/apps"
+	install -Dm644 "$share/metainfo/org.waywallen.waywallen.metainfo.xml" -t "$pkgdir/usr/share/metainfo"
+
+	# Outside Flatpak Waywallen cannot register its own autostart, and the
+	# Plasma and GNOME plugins only show a wallpaper while the daemon runs.
+	# --no-ui starts it without its window (its tray icon opens it). Each
+	# person can turn this off in their desktop's autostart settings.
+	# Hyprland ignores this file: liora-hyprland-config (liora-branding) starts
+	# it from the account's Hyprland config instead.
+	install -Dm644 waywallen-autostart.desktop "$pkgdir/etc/xdg/autostart/org.waywallen.waywallen.desktop"
+}

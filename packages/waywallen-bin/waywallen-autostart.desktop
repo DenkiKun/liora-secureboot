@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Waywallen
+Comment=Live wallpaper service
+Exec=waywallen --no-ui
+Icon=org.waywallen.waywallen
+Terminal=false
+OnlyShowIn=KDE;GNOME;
+X-KDE-autostart-phase=2

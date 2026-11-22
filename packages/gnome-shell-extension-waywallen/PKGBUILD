@@ -1,0 +1,37 @@
+# Waywallen's official GNOME Shell extension (waywallen-display), from its
+# release build, which carries its own GObject library. Turned on by default
+# for every account; each person can switch it off in Extensions.
+
+# The newest official release, found by upstream.sh (with the SHA-256 GitHub
+# recorded for the file): build.sh rebuilds it when a new release comes out,
+# so installed computers get it with their next update. LIORA_UPSTREAM is
+# "<version> <url> <sha256>".
+read -r _version _url _sha256 <<<"${LIORA_UPSTREAM:?build it through build.sh or LioraLinux/scripts/build-local-repo.sh}"
+
+pkgname=gnome-shell-extension-waywallen
+pkgver=$_version
+pkgrel=${LIORA_RECIPE_REL:-1}
+pkgdesc='GNOME Shell extension that shows Waywallen wallpapers (official release)'
+arch=(x86_64)
+url='https://github.com/waywallen/waywallen-display'
+license=(MIT)
+depends=(waywallen-bin gnome-shell gtk4 graphene glib2 gcc-libs glibc)
+options=(!strip !debug)
+_uuid=org.waywallen.gnome@waywallen.io
+source=("waywallen-gnome-$pkgver.zip::$_url")
+noextract=("waywallen-gnome-$pkgver.zip")
+sha256sums=("$_sha256")
+
+package() {
+	local dest="$pkgdir/usr/share/gnome-shell/extensions/$_uuid"
+	install -dm755 "$dest"
+	bsdtar --no-same-owner -xf "waywallen-gnome-$pkgver.zip" -C "$dest"
+	chmod -R u=rwX,go=rX "$dest"
+	chmod 755 "$dest/lib/libwaywallen-gobject.so.0"
+
+	# On by default (a person's own choice in Extensions wins).
+	install -Dm644 /dev/stdin "$pkgdir/usr/share/glib-2.0/schemas/90_waywallen-gnome.gschema.override" <<OVERRIDE
+[org.gnome.shell]
+enabled-extensions=['$_uuid']
+OVERRIDE
+}

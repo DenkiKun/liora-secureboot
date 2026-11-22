@@ -2,8 +2,10 @@
 # Builds Liora's Secure Boot packages from Arch Linux's current kernel and
 # NVIDIA modules, signs them with Liora's keys, and with PUBLISH=1 publishes
 # them as a pacman repository: the assets of this GitHub repository's "repo"
-# release. GitHub Actions runs it every hour (.github/workflows/build.yml);
-# it does nothing when Arch has released nothing new.
+# release. Also Waywallen (live wallpapers) and its plugins, from their
+# publisher's newest releases (upstream.sh), so installed computers get each
+# new Waywallen with their next update. GitHub Actions runs it every hour
+# (.github/workflows/build.yml); it does nothing when nothing new came out.
 #
 # Runs as root in an Arch Linux container. Needs:
 #   LIORA_SB_KEY    Secure Boot private key, PEM (repository secret)
@@ -14,13 +16,15 @@ set -euo pipefail
 here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 repo=liora-secureboot
 tag=repo
+# Shown by pacman -Qi instead of "Unknown Packager".
+export PACKAGER="Liora Linux <https://github.com/DenkiKun/liora-secureboot>"
 out="$here/out"
 work="$(mktemp -d /tmp/liora-sb.XXXXXX)"
 trap 'rm -rf "$work"' EXIT
 # pacman downloads as its unprivileged alpm user.
 chmod 755 "$work"
 
-pacman -Syu --noconfirm --needed base-devel sbsigntools grub linux-headers zstd github-cli git >/dev/null
+pacman -Syu --noconfirm --needed base-devel sbsigntools grub linux-headers zstd github-cli git jq squashfs-tools >/dev/null
 git config --global --add safe.directory "$here"
 # Liora's own packages are numbered by the commits that changed their recipes.
 recipe_rel() { git -C "$here" rev-list --count HEAD -- "packages/$1" 2>/dev/null || echo 1; }
@@ -55,8 +59,17 @@ if [[ "$(modules_dir "$nvidia_pkg")" != "$(modules_dir "$linux_pkg")" ]]; then
     exit 0
 fi
 
-recipes="$(cd "$here" && find build.sh keys packages prebuilt -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
-state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel liora-drivers-rel=$drivers_rel recipes=$recipes"
+# Waywallen's newest releases: "<version> <url> <sha256>" each.
+waywallen_packages=(waywallen-bin plasma-wallpaper-waywallen gnome-shell-extension-waywallen waywallen-open-wallpaper-engine)
+declare -A upstream
+waywallen_state=
+for name in "${waywallen_packages[@]}"; do
+    upstream[$name]="$(bash "$here/upstream.sh" "$name")"
+    waywallen_state+=" $name=${upstream[$name]%% *}"
+done
+
+recipes="$(cd "$here" && find build.sh upstream.sh keys packages prebuilt -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
+state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel liora-drivers-rel=$drivers_rel$waywallen_state recipes=$recipes"
 if [[ ${PUBLISH:-} == 1 ]]; then
     published="$(gh release download "$tag" --repo "${GITHUB_REPOSITORY:?}" --pattern state.txt --output - 2>/dev/null || true)"
     if [[ $state == "$published" ]]; then
@@ -69,13 +82,19 @@ printf 'Building: %s\n' "$state"
 build() {
     local name=$1 dir="$work/build/$1" rel=$recipe_rel
     shift
-    [[ $name == liora-drivers ]] && rel=$drivers_rel
+    case $name in
+    liora-secureboot) ;;
+    liora-drivers) rel=$drivers_rel ;;
+    # Liora's own count for recipes that follow another project's version.
+    *) rel="$(recipe_rel "$name")" ;;
+    esac
+    (( rel > 0 )) || rel=1
     install -d -o builder "$work/build"
     cp -r "$here/packages/$name" "$dir"
     [[ $name == liora-secureboot ]] && cp "$here/keys/liora.cer" "$dir/"
     (( $# )) && cp "$@" "$dir/"
     chown -R builder "$dir"
-    runuser -u builder -- env LIORA_SB_KEY_FILE="$LIORA_SB_KEY_FILE" LIORA_SB_CERT="$LIORA_SB_CERT" \
+    runuser -u builder -- env PACKAGER="$PACKAGER" LIORA_UPSTREAM="${upstream[$name]:-}" LIORA_SB_KEY_FILE="$LIORA_SB_KEY_FILE" LIORA_SB_CERT="$LIORA_SB_CERT" \
         LIORA_KERNEL="$kernel" LIORA_RECIPE_REL="$rel" LIORA_SIGN_FILE="$(ls /usr/lib/modules/*/build/scripts/sign-file | head -n 1)" \
         bash -c "cd '$dir' && makepkg --nodeps --noconfirm --noprogressbar" >/dev/null
     cp "$dir/$name"-[0-9]*.pkg.tar.zst "$out/"
@@ -87,6 +106,9 @@ build linux-liora "$linux_pkg"
 build nvidia-open-liora "$nvidia_pkg"
 build liora-secureboot
 build liora-drivers
+for name in "${waywallen_packages[@]}"; do
+    build "$name"
+done
 # Liora's own packages built from the Liora repository (see prebuilt/README.md):
 # published here so computers already installed get their updates.
 cp "$here"/prebuilt/*.pkg.tar.zst "$out/"
@@ -108,9 +130,31 @@ ls -l "$out"
 gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
     gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title 'Liora Secure Boot repository' \
         --notes 'pacman repository of Liora Linux signed kernel, NVIDIA modules and boot chain. Updated automatically.'
-# The new packages and database first, then the superseded packages go.
-gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "$out"/*
+# Never a database that names packages not uploaded yet, nor packages gone
+# that a computer's last database still names:
+# 1. the packages (and signatures) the new database lists;
+# 2. then the database, which switches pacman over to them;
+# 3. then only what neither the new nor the previous database lists: a
+#    computer that synced before this run still finds its packages.
+previous="$(mktemp -d)"
+if gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$repo.db" --dir "$previous" 2>/dev/null; then
+    bsdtar -xOf "$previous/$repo.db" --include '*/desc' 2>/dev/null |
+        awk '/^%FILENAME%$/ { getline; print; print $0 ".sig" }' >"$previous/keep"
+fi
+touch "$previous/keep"
+packages=() database=()
+for file in "$out"/*; do
+    case $(basename "$file") in
+    "$repo".* | state.txt) database+=("$file") ;;
+    *) packages+=("$file") ;;
+    esac
+done
+gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "${packages[@]}"
+gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "${database[@]}"
 gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
     while read -r asset; do
-        [[ -e "$out/$asset" ]] || gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes
+        [[ -e "$out/$asset" ]] && continue
+        grep -qxF "$asset" "$previous/keep" && continue
+        gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes
     done
+rm -rf "$previous"

@@ -8,6 +8,12 @@ than the one the ISOs carry.
 
 | Package | Built from |
 |---|---|
-| `liora-branding` | `packaging/liora-branding` (with `LIORA_SRC` at the repository root) |
+| `liora-branding` | `packaging/liora-branding` |
+| `liora-system` | `packaging/liora-system` (Liora's system defaults; `liora-branding` depends on it) |
+| `liora-apps` | `packaging/liora-apps` |
+| `liora-automation` | `packaging/liora-automation` |
+| `liora-trading`, `liora-webapp`, `liora-tradingview`, `liora-metatrader5`, `liora-ibkr-tws`, `liora-freqtrade` | `packaging/liora-trading` |
+
+Each is built with `LIORA_SRC` set to the `LioraLinux` folder of the repository.
 
 Keep only the newest version of each package.

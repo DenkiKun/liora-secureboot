@@ -115,7 +115,24 @@ done
 # published here so computers already installed get their updates.
 cp "$here"/prebuilt/*.pkg.tar.zst "$out/"
 
+# A package already published under the same name stays exactly as it is:
+# the database lists the published file (rebuilds are not byte-identical), and
+# it is never uploaded again. Uploading over it (--clobber) deletes it first,
+# and a computer downloading it at that moment got a 404 (2026-11-25).
+published=()
+if [[ ${PUBLISH:-} == 1 ]]; then
+    mapfile -t assets < <(gh release view "$tag" --repo "${GITHUB_REPOSITORY:?}" --json assets --jq '.assets[].name' 2>/dev/null || true)
+    for package in "$out"/*.pkg.tar.zst; do
+        name="$(basename "$package")"
+        printf '%s\n' "${assets[@]}" | grep -qxF "$name" || continue
+        printf '%s\n' "${assets[@]}" | grep -qxF "$name.sig" || continue
+        rm -f "$package"
+        gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$name" --pattern "$name.sig" --dir "$out"
+        published+=("$name" "$name.sig")
+    done
+fi
 for package in "$out"/*.pkg.tar.zst; do
+    [[ -e $package.sig ]] && continue
     gpg --batch --yes --local-user "$fpr" --detach-sign "$package"
 done
 repo-add --quiet --sign --key "$fpr" "$out/$repo.db.tar.gz" "$out"/*.pkg.tar.zst
@@ -148,10 +165,10 @@ packages=() database=()
 for file in "$out"/*; do
     case $(basename "$file") in
     "$repo".* | state.txt) database+=("$file") ;;
-    *) packages+=("$file") ;;
+    *) printf '%s\n' "${published[@]}" | grep -qxF "$(basename "$file")" || packages+=("$file") ;;
     esac
 done
-gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "${packages[@]}"
+(( ${#packages[@]} == 0 )) || gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "${packages[@]}"
 gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "${database[@]}"
 gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
     while read -r asset; do

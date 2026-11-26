@@ -61,14 +61,25 @@ if [[ "$(modules_dir "$nvidia_pkg")" != "$(modules_dir "$linux_pkg")" ]]; then
 fi
 
 # The newest releases of Waywallen and its plugins, and of Vice:
-# "<version> <url> <sha256>" each.
+# "<version> <url> <sha256>" each. When one cannot be found (its publisher
+# renamed the file, 2026-11-25), that package stays at the version already
+# published and everything else is still built and published: the kernel and
+# NVIDIA modules must not wait for it. The run then fails at the end, and
+# keeps failing every hour (state.txt is not updated) until upstream.sh is fixed.
 upstream_packages=(waywallen-bin plasma-wallpaper-waywallen gnome-shell-extension-waywallen waywallen-open-wallpaper-engine vice-clipper)
 declare -A upstream
 upstream_state=
+missing=()
 for name in "${upstream_packages[@]}"; do
-    upstream[$name]="$(bash "$here/upstream.sh" "$name")"
-    upstream_state+=" $name=${upstream[$name]%% *}"
+    if upstream[$name]="$(bash "$here/upstream.sh" "$name")"; then
+        upstream_state+=" $name=${upstream[$name]%% *}"
+    else
+        printf '::error::%s: newest release not found by upstream.sh; keeping the published version\n' "$name"
+        missing+=("$name")
+        upstream_state+=" $name=?"
+    fi
 done
+is_missing() { [[ " ${missing[*]} " == *" $1 "* ]]; }
 
 recipes="$(cd "$here" && find build.sh upstream.sh keys packages prebuilt -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -c1-16)"
 state="linux=$kernel nvidia-open=$nvidia $(pacman -Q grub | tr ' ' '=') liora-secureboot-rel=$recipe_rel liora-drivers-rel=$drivers_rel$upstream_state recipes=$recipes"
@@ -109,7 +120,7 @@ build nvidia-open-liora "$nvidia_pkg"
 build liora-secureboot
 build liora-drivers
 for name in "${upstream_packages[@]}"; do
-    build "$name"
+    is_missing "$name" || build "$name"
 done
 # Liora's own packages built from the Liora repository (see prebuilt/README.md):
 # published here so computers already installed get their updates.
@@ -122,6 +133,16 @@ cp "$here"/prebuilt/*.pkg.tar.zst "$out/"
 published=()
 if [[ ${PUBLISH:-} == 1 ]]; then
     mapfile -t assets < <(gh release view "$tag" --repo "${GITHUB_REPOSITORY:?}" --json assets --jq '.assets[].name' 2>/dev/null || true)
+    # A package whose newest release was not found: the newest one published
+    # (the loop below downloads it with its signature and keeps it as it is).
+    for name in "${missing[@]}"; do
+        file="$(printf '%s\n' "${assets[@]}" | grep -E "^$name-[0-9][^-]*-[0-9]+-[a-z0-9_]+\.pkg\.tar\.zst\$" | sort -V | tail -n 1 || true)"
+        if [[ -n $file ]] && printf '%s\n' "${assets[@]}" | grep -qxF "$file.sig"; then
+            touch "$out/$file"
+        else
+            printf '::error::%s: not published yet either; left out of the repository\n' "$name"
+        fi
+    done
     for package in "$out"/*.pkg.tar.zst; do
         name="$(basename "$package")"
         printf '%s\n' "${assets[@]}" | grep -qxF "$name" || continue
@@ -142,10 +163,17 @@ for file in db files; do
     cp "$out/$repo.$file.tar.gz" "$out/$repo.$file"
     cp "$out/$repo.$file.tar.gz.sig" "$out/$repo.$file.sig"
 done
-printf '%s\n' "$state" >"$out/state.txt"
+# With a package missing, the published state.txt stays as it was, so the
+# next run tries again instead of finding everything up to date.
+(( ${#missing[@]} )) || printf '%s\n' "$state" >"$out/state.txt"
 ls -l "$out"
 
-[[ ${PUBLISH:-} == 1 ]] || exit 0
+failed_upstream() {
+    (( ${#missing[@]} )) || return 0
+    printf '::error::Not updated (upstream.sh could not find their newest release): %s\n' "${missing[*]}"
+    return 1
+}
+[[ ${PUBLISH:-} == 1 ]] || { failed_upstream; exit; }
 gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
     gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title 'Liora Secure Boot repository' \
         --notes 'pacman repository of Liora Linux signed kernel, NVIDIA modules and boot chain. Updated automatically.'
@@ -172,8 +200,9 @@ done
 gh release upload "$tag" --repo "$GITHUB_REPOSITORY" --clobber "${database[@]}"
 gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' |
     while read -r asset; do
-        [[ -e "$out/$asset" ]] && continue
+        [[ -e "$out/$asset" || $asset == state.txt ]] && continue
         grep -qxF "$asset" "$previous/keep" && continue
         gh release delete-asset "$tag" "$asset" --repo "$GITHUB_REPOSITORY" --yes
     done
 rm -rf "$previous"
+failed_upstream

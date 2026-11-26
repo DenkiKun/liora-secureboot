@@ -14,7 +14,7 @@ releases=(
     'waywallen-bin                   waywallen/waywallen              waywallen-VERSION-x86_64.AppImage'
     'plasma-wallpaper-waywallen      waywallen/waywallen-display      waywallen-kde-VERSION-x86_64.zip'
     'gnome-shell-extension-waywallen waywallen/waywallen-display      waywallen-gnome-VERSION-x86_64.zip'
-    'waywallen-open-wallpaper-engine waywallen/open-wallpaper-engine  org.waywallen.open-wallpaper-engine-VERSION-linux-x86_64.zip'
+    'waywallen-open-wallpaper-engine waywallen/open-wallpaper-engine  open-wallpaper-engine-VERSION-linux-x86_64.zip'
 )
 
 latest_release() {
@@ -42,10 +42,14 @@ for entry in "${releases[@]}"; do
     version="$(jq -r '.tag_name | ltrimstr("v")' <<<"$json")"
     [[ $version =~ ^[0-9][0-9A-Za-z.+_]*$ ]] || { echo "upstream.sh: unexpected version for $package: $version" >&2; exit 1; }
     name="${asset//VERSION/$version}"
+    # (read fails when there is no such file: let the message below say so.)
     read -r url sha256 < <(jq -r --arg name "$name" '.assets[] | select(.name == $name)
-        | "\(.browser_download_url) \(.digest // "" | ltrimstr("sha256:"))"' <<<"$json")
-    [[ ${url:-} == https://github.com/"$repo"/releases/download/* && ${sha256:-} =~ ^[0-9a-f]{64}$ ]] ||
-        { echo "upstream.sh: $name not found (or without a SHA-256) in $repo's latest release" >&2; exit 1; }
+        | "\(.browser_download_url) \(.digest // "" | ltrimstr("sha256:"))"' <<<"$json") || true
+    if [[ ${url:-} != https://github.com/"$repo"/releases/download/* || ! ${sha256:-} =~ ^[0-9a-f]{64}$ ]]; then
+        printf 'upstream.sh: %s not found (or without a SHA-256) in %s %s; its files: %s\n' \
+            "$name" "$repo" "$version" "$(jq -r '[.assets[].name] | join(", ")' <<<"$json")" >&2
+        exit 1
+    fi
     printf '%s %s %s\n' "$version" "$url" "$sha256"
     exit 0
 done
